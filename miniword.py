@@ -1,12 +1,15 @@
 import sys
-from PySide6.QtWidgets import (QApplication, QMainWindow, QTextEdit, QFileDialog, QToolBar, QStatusBar, QMessageBox, QLabel, QColorDialog, QWidget, QVBoxLayout, QLineEdit, QPushButton, QHBoxLayout, QDockWidget)
-from PySide6.QtGui import QKeySequence, QAction, QTextCursor, QTextCharFormat, QColor, QTextDocument
-from PySide6.QtCore import Qt
 
+import threading
+from PySide6.QtWidgets import (QApplication, QMainWindow, QTextEdit, QFileDialog, QToolBar, QStatusBar, QMessageBox, QLabel, QColorDialog, QWidget, QVBoxLayout, QLineEdit, QPushButton, QHBoxLayout, QDockWidget)
+from PySide6.QtGui import QKeySequence, QAction, QTextCursor, QTextCharFormat, QColor, QTextDocument, QFont
+from PySide6.QtCore import Qt, Signal
+from speech_recognition import Recognizer, Microphone, WaitTimeoutError, UnknownValueError, RequestError 
 
 
 
 class MiniWord(QMainWindow):
+    texto_dictado = Signal(str)
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Mini Word")
@@ -27,6 +30,7 @@ class MiniWord(QMainWindow):
         self.crear_toolbar()
         self.crear_statusbar()
         self.crear_panel_busqueda()
+        self.texto_dictado.connect(self.insertar_texto_dictado)
 
     def crear_acciones(self):
         self.nuevo = QAction("🆕", self, triggered=self.nuevo_archivo)
@@ -41,6 +45,7 @@ class MiniWord(QMainWindow):
         self.pegar = QAction("📥", self, triggered=self.text_edit.paste)
 
         self.buscar = QAction("🔍", self, triggered=self.mostrar_panel_busqueda)
+        self.dictar = QAction("🎤", self, triggered=self.iniciar_dictado)
         self.color_fondo = QAction("🎨 Color fondo", self, triggered=self.cambiar_color)
 
     def crear_menu(self):
@@ -49,7 +54,7 @@ class MiniWord(QMainWindow):
         m_archivo.addActions([self.nuevo, self.abrir, self.guardar, self.salir])
 
         m_editar = menu.addMenu("Editar")
-        m_editar.addActions([self.deshacer, self.rehacer, self.cortar, self.copiar, self.pegar, self.buscar])
+        m_editar.addActions([self.deshacer, self.rehacer, self.cortar, self.copiar, self.pegar, self.buscar, self.dictar])
 
         m_ver = menu.addMenu("Personalizar")
         m_ver.addAction(self.color_fondo)
@@ -57,7 +62,7 @@ class MiniWord(QMainWindow):
     def crear_toolbar(self):
         barra = QToolBar()
         self.addToolBar(barra)
-        for accion in [self.nuevo, self.abrir, self.guardar, self.deshacer, self.rehacer, self.cortar, self.copiar, self.pegar, self.buscar]:
+        for accion in [self.nuevo, self.abrir, self.guardar, self.deshacer, self.rehacer, self.cortar, self.copiar, self.pegar, self.buscar, self.dictar]:
             barra.addAction(accion)
 
     def crear_statusbar(self):
@@ -207,6 +212,72 @@ class MiniWord(QMainWindow):
 
     def contar_palabras(self):
         self.word_label.setText(f"Palabras: {len(self.text_edit.toPlainText().split())}")
+
+    def iniciar_dictado(self):
+        self.statusBar().showMessage("Escuchando... 🎤")
+        threading.Thread(target=self.escuchar_audio, daemon=True).start()
+
+    def escuchar_audio(self):
+        r = Recognizer()
+        with Microphone() as source:
+            try:
+                # Ajustar ruido ambiental para mejorar precisión
+                r.adjust_for_ambient_noise(source, duration=0.5)
+                audio = r.listen(source, timeout=5, phrase_time_limit=10)
+                texto = r.recognize_google(audio, language="es-ES")
+                self.texto_dictado.emit(texto)
+            except WaitTimeoutError:
+                self.texto_dictado.emit("Error: Tiempo de espera agotado.")
+            except UnknownValueError:
+                self.texto_dictado.emit("Error: No se entendió el audio.")
+            except RequestError:
+                self.texto_dictado.emit("Error: Problema de conexión.")
+            except Exception as e:
+                self.texto_dictado.emit(f"Error: {str(e)}")
+
+    def insertar_texto_dictado(self, texto):
+        if texto.startswith("Error:"):
+            self.statusBar().showMessage(texto, 5000)
+            return
+
+        comando = texto.lower().strip()
+        if comando == "negrita":
+            self.toggle_bold()
+            self.statusBar().showMessage("Comando: Negrita activado/desactivado", 3000)
+        elif comando == "cursiva":
+            self.toggle_italic()
+            self.statusBar().showMessage("Comando: Cursiva activado/desactivado", 3000)
+        elif comando == "subrayado":
+            self.toggle_underline()
+            self.statusBar().showMessage("Comando: Subrayado activado/desactivado", 3000)
+        elif comando == "guardar archivo":
+            self.guardar_archivo()
+            self.statusBar().showMessage("Comando: Guardar archivo", 3000)
+        elif comando == "nuevo documento":
+            self.nuevo_archivo()
+            self.statusBar().showMessage("Comando: Nuevo documento", 3000)
+        else:
+            self.text_edit.insertPlainText(texto + " ")
+            self.statusBar().showMessage("Texto insertado.", 3000)
+
+    def toggle_bold(self):
+        fmt = QTextCharFormat()
+        weight = self.text_edit.fontWeight()
+        if weight == QFont.Bold:
+            fmt.setFontWeight(QFont.Normal)
+        else:
+            fmt.setFontWeight(QFont.Bold)
+        self.text_edit.mergeCurrentCharFormat(fmt)
+
+    def toggle_italic(self):
+        fmt = QTextCharFormat()
+        fmt.setFontItalic(not self.text_edit.fontItalic())
+        self.text_edit.mergeCurrentCharFormat(fmt)
+
+    def toggle_underline(self):
+        fmt = QTextCharFormat()
+        fmt.setFontUnderline(not self.text_edit.fontUnderline())
+        self.text_edit.mergeCurrentCharFormat(fmt)
 
 
 if __name__ == "__main__":
